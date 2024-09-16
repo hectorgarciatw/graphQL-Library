@@ -3,6 +3,8 @@ const { startStandaloneServer } = require("@apollo/server/standalone");
 const connectDB = require("./db");
 const Book = require("./models/Book");
 const Author = require("./models/Author");
+const User = require("./models/User");
+const { GraphQLError } = require("graphql");
 require("dotenv").config();
 
 connectDB();
@@ -69,33 +71,53 @@ const resolvers = {
     },
     Mutation: {
         addBook: async (root, args) => {
-            let author = await Author.findOne({ name: args.author });
+            try {
+                let author = await Author.findOne({ name: args.author });
 
-            if (!author) {
-                author = new Author({ name: args.author });
-                await author.save();
+                if (!author) {
+                    author = new Author({ name: args.author });
+                    await author.save();
+                }
+
+                const newBook = new Book({
+                    title: args.title,
+                    published: args.published,
+                    author: author._id,
+                    genres: args.genres,
+                });
+
+                await newBook.save();
+                return newBook.populate("author");
+            } catch (error) {
+                throw new GraphQLError("Error al agregar el libro: " + error.message, {
+                    extensions: {
+                        code: "BAD_USER_INPUT",
+                    },
+                });
             }
-
-            const newBook = new Book({
-                title: args.title,
-                published: args.published,
-                author: author._id,
-                genres: args.genres,
-            });
-
-            await newBook.save();
-            return newBook.populate("author");
         },
 
         editAuthor: async (root, args) => {
-            const author = await Author.findOne({ name: args.name });
-            if (!author) {
-                return null;
-            }
+            try {
+                const author = await Author.findOne({ name: args.name });
+                if (!author) {
+                    throw new GraphQLError("El autor no existe", {
+                        extensions: {
+                            code: "NOT_FOUND",
+                        },
+                    });
+                }
 
-            author.born = args.setBornTo;
-            await author.save();
-            return author;
+                author.born = args.setBornTo;
+                await author.save();
+                return author;
+            } catch (error) {
+                throw new GraphQLError("Error al editar el autor: " + error.message, {
+                    extensions: {
+                        code: "BAD_USER_INPUT",
+                    },
+                });
+            }
         },
     },
 };
