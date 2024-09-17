@@ -37,6 +37,7 @@ const typeDefs = `
 
     type Token {
         value: String!
+        favoriteGenre: String!
     }
 
     type Query {
@@ -185,7 +186,7 @@ const resolvers = {
             }
 
             const token = jwt.sign({ id: user._id, username: user.username }, JWT_SECRET);
-            return { value: token };
+            return { value: token, favoriteGenre: user.favoriteGenre };
         },
     },
     Author: {
