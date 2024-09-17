@@ -1,5 +1,9 @@
 const { ApolloServer } = require("@apollo/server");
 const { startStandaloneServer } = require("@apollo/server/standalone");
+const { makeExecutableSchema } = require("@graphql-tools/schema");
+const { WebSocketServer } = require("ws");
+const { useServer } = require("graphql-ws/lib/use/ws");
+const { PubSub } = require("graphql-subscriptions");
 const connectDB = require("./db");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
@@ -12,6 +16,8 @@ const JWT_SECRET = process.env.JWT_SECRET;
 require("dotenv").config();
 
 connectDB();
+
+const pubsub = new PubSub();
 
 const typeDefs = `
     type Author {
@@ -69,6 +75,10 @@ const typeDefs = `
             password: String!
         ): Token
     }
+
+    type Subscription {
+        bookAdded: Book!
+    }
 `;
 
 // Resolvers
@@ -93,7 +103,7 @@ const resolvers = {
         },
         allAuthors: async () => Author.find({}),
         me: (root, args, context) => {
-            return context.currentUser; // Usuario actual basado en el token JWT
+            return context.currentUser;
         },
     },
     Mutation: {
@@ -119,7 +129,12 @@ const resolvers = {
             });
 
             await newBook.save();
-            return newBook.populate("author");
+            const populatedBook = await newBook.populate("author");
+
+            // Publish the new book
+            pubsub.publish("BOOK_ADDED", { bookAdded: populatedBook });
+
+            return populatedBook;
         },
 
         editAuthor: async (root, args, context) => {
@@ -151,7 +166,7 @@ const resolvers = {
                 });
             }
 
-            const passwordHash = await bcrypt.hash("defaultpassword", 10); // Contraseña predeterminada
+            const passwordHash = await bcrypt.hash("defaultpassword", 10);
 
             const newUser = new User({
                 username,
@@ -189,18 +204,32 @@ const resolvers = {
             return { value: token, favoriteGenre: user.favoriteGenre };
         },
     },
+    Subscription: {
+        bookAdded: {
+            subscribe: () => pubsub.asyncIterator(["BOOK_ADDED"]),
+        },
+    },
     Author: {
         bookCount: async (root) => Book.countDocuments({ author: root._id }),
     },
 };
 
-// Create the Apollo server
-const server = new ApolloServer({
-    typeDefs,
-    resolvers,
+// Create the Schema
+const schema = makeExecutableSchema({ typeDefs, resolvers });
+
+// The Apollo server
+const server = new ApolloServer({ schema });
+
+// Inits HTTP & WebSocket
+const httpServer = require("http").createServer();
+const wsServer = new WebSocketServer({
+    server: httpServer,
+    path: "/graphql",
 });
 
-// Init the server
+// Configure WebSocket with graphql-ws
+useServer({ schema }, wsServer);
+
 startStandaloneServer(server, {
     context: async ({ req }) => {
         const auth = req ? req.headers.authorization : null;
@@ -219,4 +248,7 @@ startStandaloneServer(server, {
     listen: { port: 4000 },
 }).then(({ url }) => {
     console.log(`Server ready at ${url}`);
+    httpServer.listen(4001, () => {
+        console.log(`WebSocket server ready at ws://localhost:4001/graphql`);
+    });
 });
